@@ -316,7 +316,8 @@ pub trait PathFilesystem {
     /// release an open directory. For every [`opendir`][PathFilesystem::opendir] call there will
     /// be exactly one `releasedir` call. `fh` will contain the value set by the
     /// [`opendir`][PathFilesystem::opendir] method, or will be undefined if the
-    /// [`opendir`][PathFilesystem::opendir] method didn't set any value.
+    /// [`opendir`][PathFilesystem::opendir] method didn't set any value. When the directory was
+    /// removed while it was open, `path` is empty.
     async fn releasedir(&self, req: Request, path: &OsStr, fh: u64, flags: u32) -> Result<()> {
         Ok(())
     }

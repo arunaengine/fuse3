@@ -932,9 +932,11 @@ where
 
     async fn releasedir(&self, req: Request, inode: u64, fh: u64, flags: u32) -> Result<()> {
         let inode_name_manager = self.inode_name_manager.read().await;
+        // A directory removed while it was open has no path any more. It is
+        // still released, with an empty path, so the handle can be freed.
         let path = inode_name_manager
             .get_absolute_path(inode)
-            .ok_or_else(Errno::new_not_exist)?;
+            .unwrap_or_default();
 
         self.path_filesystem
             .releasedir(req, path.as_ref(), fh, flags)
@@ -1388,6 +1390,48 @@ mod tests {
 
     fn name(name: &str) -> Name {
         Name::new(ROOT_INODE, OsString::from(name))
+    }
+
+    #[cfg(feature = "tokio-runtime")]
+    #[tokio::test]
+    async fn a_directory_without_path_is_still_released() {
+        use std::sync::Mutex;
+
+        #[derive(Default)]
+        struct Released(Mutex<Vec<(OsString, u64)>>);
+
+        impl PathFilesystem for Released {
+            async fn init(&self, _req: Request) -> Result<super::super::reply::ReplyInit> {
+                Err(libc::ENOSYS.into())
+            }
+
+            async fn destroy(&self, _req: Request) {}
+
+            async fn releasedir(
+                &self,
+                _req: Request,
+                path: &OsStr,
+                fh: u64,
+                _flags: u32,
+            ) -> Result<()> {
+                self.0.lock().unwrap().push((path.to_owned(), fh));
+                Ok(())
+            }
+        }
+
+        let bridge = InodePathBridge::new(Released::default());
+        let req = Request {
+            unique: 1,
+            uid: 0,
+            gid: 0,
+            pid: 0,
+        };
+        // An inode the bridge does not know, like a removed directory.
+        bridge.releasedir(req, 4242, 7, 0).await.unwrap();
+        assert_eq!(
+            *bridge.path_filesystem.0.lock().unwrap(),
+            [(OsString::new(), 7)]
+        );
     }
 
     #[test]
